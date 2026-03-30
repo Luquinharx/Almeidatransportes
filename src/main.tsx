@@ -23,8 +23,8 @@ async function cleanupStaleServiceWorkers() {
 	}
 }
 
-initMonitoring();
-reportWebVitals();
+void initMonitoring();
+void reportWebVitals();
 void cleanupStaleServiceWorkers();
 
 createRoot(document.getElementById("root")!).render(<App />);
