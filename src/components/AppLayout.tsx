@@ -36,7 +36,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
       {/* Sidebar */}
       <aside className={cn(
-        "fixed z-40 flex h-full w-[280px] flex-col bg-sidebar shadow-2xl transition-all duration-300 ease-in-out lg:static lg:w-64 lg:shadow-none",
+        "fixed z-40 flex h-full w-[280px] flex-col bg-sidebar shadow-2xl transition-all duration-300 ease-in-out lg:static lg:translate-x-0 lg:shadow-none",
         collapsed ? "lg:w-20" : "lg:w-64",
         open ? "translate-x-0" : "-translate-x-full"
       )}>

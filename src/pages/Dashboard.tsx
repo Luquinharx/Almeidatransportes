@@ -26,8 +26,8 @@ function getRange(period: string) {
 }
 
 function TrendIcon({ value }: { value: number }) {
-  if (value > 0) return <ArrowUpRight className="h-4 w-4 text-expense" />;
-  if (value < 0) return <ArrowDownRight className="h-4 w-4 text-income" />;
+  if (value > 0) return <ArrowUpRight className="h-4 w-4 text-muted-foreground" />;
+  if (value < 0) return <ArrowDownRight className="h-4 w-4 text-muted-foreground" />;
   return <Minus className="h-4 w-4 text-muted-foreground" />;
 }
 
@@ -163,11 +163,11 @@ export default function Dashboard() {
 
       {/* KPIs */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-        <KpiCard title="Entradas" value={fmt(totalIncome)} icon={TrendingUp} variant="income" />
-        <KpiCard title="Saídas" value={fmt(totalExpense)} icon={TrendingDown} variant="expense" />
-        <KpiCard title="Saldo" value={fmt(balance)} icon={Wallet} variant="primary" />
-        <KpiCard title="Pendentes" value={String(pendingCount)} icon={Clock} variant="pending" />
-        <KpiCard title="Fixas/mês" value={fmt(fixedTotal)} icon={CalendarClock} variant="expense" />
+        <KpiCard title="Entradas" value={fmt(totalIncome)} icon={TrendingUp} valueColor={totalIncome > 0 ? "green" : "black"} />
+        <KpiCard title="Saídas" value={fmt(totalExpense)} icon={TrendingDown} valueColor={totalExpense > 0 ? "red" : "black"} />
+        <KpiCard title="Saldo" value={fmt(balance)} icon={Wallet} valueColor={balance > 0 ? "green" : balance < 0 ? "red" : "black"} />
+        <KpiCard title="Pendentes" value={String(pendingCount)} icon={Clock} valueColor={pendingCount > 0 ? "black" : "black"} />
+        <KpiCard title="Fixas/mês" value={fmt(fixedTotal)} icon={CalendarClock} valueColor={fixedTotal > 0 ? "red" : "black"} />
       </div>
 
       {/* Insights Cards */}
@@ -190,7 +190,10 @@ export default function Dashboard() {
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Semana vs Anterior</p>
             <TrendIcon value={analytics.weekTrend} />
           </div>
-          <p className="mt-2 text-xl font-bold text-card-foreground">
+          <p className={cn(
+            "mt-2 text-xl font-bold",
+            analytics.weekTrend > 0 ? "text-rose-500" : analytics.weekTrend < 0 ? "text-emerald-500" : "text-foreground"
+          )}>
             {analytics.weekTrend !== 0 ? `${analytics.weekTrend > 0 ? "+" : ""}${analytics.weekTrend.toFixed(1)}%` : "—"}
           </p>
           <p className="text-xs text-muted-foreground mt-1">{fmt(analytics.thisWeekExpense)} esta semana</p>
@@ -200,7 +203,10 @@ export default function Dashboard() {
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Mês vs Anterior</p>
             <TrendIcon value={analytics.monthTrend} />
           </div>
-          <p className="mt-2 text-xl font-bold text-card-foreground">
+          <p className={cn(
+            "mt-2 text-xl font-bold",
+            analytics.monthTrend > 0 ? "text-rose-500" : analytics.monthTrend < 0 ? "text-emerald-500" : "text-foreground"
+          )}>
             {analytics.monthTrend !== 0 ? `${analytics.monthTrend > 0 ? "+" : ""}${analytics.monthTrend.toFixed(1)}%` : "—"}
           </p>
         </div>
