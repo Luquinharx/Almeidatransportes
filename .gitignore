@@ -45,3 +45,6 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+
+# Local debug artifacts
+vercel_home.html
