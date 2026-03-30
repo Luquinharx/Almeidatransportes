@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Carro em movimento na estrada">
+  <defs>
+    <linearGradient id="sky" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="55%" stop-color="#1e293b"/>
+      <stop offset="100%" stop-color="#065f46"/>
+    </linearGradient>
+    <linearGradient id="road" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0%" stop-color="#1f2937"/>
+      <stop offset="100%" stop-color="#111827"/>
+    </linearGradient>
+    <filter id="blur" x="-10%" y="-10%" width="120%" height="120%">
+      <feGaussianBlur stdDeviation="16"/>
+    </filter>
+    <style>
+      .lane {
+        animation: laneMove 1.6s linear infinite;
+      }
+      .car {
+        animation: carDrive 5s ease-in-out infinite;
+      }
+      .wheel {
+        transform-box: fill-box;
+        transform-origin: center;
+        animation: spin 0.6s linear infinite;
+      }
+      .cloudA {
+        animation: cloudFloat 22s linear infinite;
+      }
+      .cloudB {
+        animation: cloudFloat 28s linear infinite reverse;
+      }
+      @keyframes laneMove {
+        from { transform: translateX(0); }
+        to { transform: translateX(-200px); }
+      }
+      @keyframes carDrive {
+        0% { transform: translateX(-120px); }
+        50% { transform: translateX(620px); }
+        100% { transform: translateX(1480px); }
+      }
+      @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+      }
+      @keyframes cloudFloat {
+        from { transform: translateX(-280px); }
+        to { transform: translateX(1820px); }
+      }
+    </style>
+  </defs>
+
+  <rect width="1600" height="900" fill="url(#sky)"/>
+
+  <ellipse class="cloudA" cx="120" cy="180" rx="120" ry="40" fill="#e2e8f0" opacity="0.12" filter="url(#blur)"/>
+  <ellipse class="cloudB" cx="280" cy="260" rx="160" ry="54" fill="#e2e8f0" opacity="0.1" filter="url(#blur)"/>
+
+  <rect y="560" width="1600" height="340" fill="url(#road)"/>
+  <rect y="610" width="1600" height="6" fill="#374151" opacity="0.8"/>
+
+  <g class="lane">
+    <rect x="0" y="715" width="120" height="14" rx="7" fill="#f8fafc" opacity="0.9"/>
+    <rect x="200" y="715" width="120" height="14" rx="7" fill="#f8fafc" opacity="0.9"/>
+    <rect x="400" y="715" width="120" height="14" rx="7" fill="#f8fafc" opacity="0.9"/>
+    <rect x="600" y="715" width="120" height="14" rx="7" fill="#f8fafc" opacity="0.9"/>
+    <rect x="800" y="715" width="120" height="14" rx="7" fill="#f8fafc" opacity="0.9"/>
+    <rect x="1000" y="715" width="120" height="14" rx="7" fill="#f8fafc" opacity="0.9"/>
+    <rect x="1200" y="715" width="120" height="14" rx="7" fill="#f8fafc" opacity="0.9"/>
+    <rect x="1400" y="715" width="120" height="14" rx="7" fill="#f8fafc" opacity="0.9"/>
+    <rect x="1600" y="715" width="120" height="14" rx="7" fill="#f8fafc" opacity="0.9"/>
+  </g>
+
+  <g class="car" transform="translate(-120,0)">
+    <rect x="0" y="642" width="220" height="68" rx="18" fill="#0ea5a4"/>
+    <rect x="50" y="602" width="120" height="54" rx="18" fill="#14b8a6"/>
+    <rect x="62" y="612" width="42" height="28" rx="6" fill="#bae6fd"/>
+    <rect x="112" y="612" width="46" height="28" rx="6" fill="#bae6fd"/>
+    <circle class="wheel" cx="54" cy="722" r="24" fill="#0f172a"/>
+    <circle class="wheel" cx="170" cy="722" r="24" fill="#0f172a"/>
+    <circle cx="54" cy="722" r="9" fill="#94a3b8"/>
+    <circle cx="170" cy="722" r="9" fill="#94a3b8"/>
+  </g>
+</svg>

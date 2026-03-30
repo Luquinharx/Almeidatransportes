@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Rodovia em movimento">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#eef2f7"/>
+      <stop offset="55%" stop-color="#d7dde5"/>
+      <stop offset="100%" stop-color="#b9c3cf"/>
+    </linearGradient>
+    <linearGradient id="fog" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.8"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="road" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#2f343a"/>
+      <stop offset="100%" stop-color="#12161a"/>
+    </linearGradient>
+    <linearGradient id="shoulder" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#3e454d"/>
+      <stop offset="100%" stop-color="#1c2229"/>
+    </linearGradient>
+    <style>
+      .centerLine {
+        stroke: #f8fafc;
+        stroke-width: 10;
+        stroke-dasharray: 42 38;
+        animation: laneDash 0.9s linear infinite;
+      }
+      .roadPulse {
+        animation: roadPulse 3.8s ease-in-out infinite;
+      }
+      .treeNear {
+        animation: sway 4s ease-in-out infinite alternate;
+      }
+      .treeFar {
+        animation: sway 6s ease-in-out infinite alternate-reverse;
+      }
+      @keyframes laneDash {
+        from { stroke-dashoffset: 0; }
+        to { stroke-dashoffset: 160; }
+      }
+      @keyframes roadPulse {
+        0% { transform: scale(1); }
+        50% { transform: scale(1.01); }
+        100% { transform: scale(1); }
+      }
+      @keyframes sway {
+        from { transform: translateX(0); }
+        to { transform: translateX(3px); }
+      }
+    </style>
+  </defs>
+
+  <rect width="1920" height="1080" fill="url(#sky)"/>
+  <rect y="0" width="1920" height="420" fill="url(#fog)"/>
+
+  <g opacity="0.95">
+    <polygon points="0,520 820,360 780,360 0,520" fill="#2f3c2f"/>
+    <polygon points="1920,520 1100,360 1140,360 1920,520" fill="#2f3c2f"/>
+  </g>
+
+  <g class="treeFar" fill="#1f2a21" opacity="0.9">
+    <polygon points="90,520 130,410 170,520"/>
+    <polygon points="170,520 220,380 270,520"/>
+    <polygon points="280,520 330,390 380,520"/>
+    <polygon points="430,520 480,375 530,520"/>
+
+    <polygon points="1750,520 1790,410 1830,520"/>
+    <polygon points="1650,520 1700,380 1750,520"/>
+    <polygon points="1540,520 1590,395 1640,520"/>
+    <polygon points="1400,520 1460,380 1520,520"/>
+  </g>
+
+  <g class="treeNear" fill="#151b18" opacity="0.98">
+    <polygon points="0,620 90,330 180,620"/>
+    <polygon points="120,620 220,300 320,620"/>
+    <polygon points="300,620 390,340 480,620"/>
+
+    <polygon points="1920,620 1830,330 1740,620"/>
+    <polygon points="1800,620 1700,300 1600,620"/>
+    <polygon points="1620,620 1530,340 1440,620"/>
+  </g>
+
+  <g class="roadPulse" transform-origin="960px 760px">
+    <polygon points="680,360 1240,360 1640,1080 280,1080" fill="url(#road)"/>
+    <polygon points="680,360 700,360 340,1080 280,1080" fill="url(#shoulder)" opacity="0.95"/>
+    <polygon points="1240,360 1220,360 1580,1080 1640,1080" fill="url(#shoulder)" opacity="0.95"/>
+
+    <line x1="960" y1="392" x2="960" y2="1080" class="centerLine" stroke-linecap="round"/>
+
+    <line x1="700" y1="360" x2="310" y2="1080" stroke="#f8fafc" stroke-width="4" opacity="0.9"/>
+    <line x1="1220" y1="360" x2="1610" y2="1080" stroke="#f8fafc" stroke-width="4" opacity="0.9"/>
+  </g>
+
+  <rect y="320" width="1920" height="130" fill="url(#fog)" opacity="0.9"/>
+</svg>
