@@ -1,0 +1,43 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isAllowedFolder(folder) {
+      return folder == "transactions" || folder == "reports" || folder == "employees";
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function hasValidSize() {
+      return request.resource.size <= 10 * 1024 * 1024;
+    }
+
+    function hasAllowedContentType() {
+      return request.resource.contentType.matches("image/.*") ||
+        request.resource.contentType == "application/pdf";
+    }
+
+    function hasAllowedExtension() {
+      return request.resource.name.matches(".*\\.(jpg|jpeg|png|webp|pdf)$");
+    }
+
+    // Escalabilidade: todo arquivo do app fica sob users/{uid}/...
+    // Estrutura sugerida:
+    // users/{uid}/transactions/attachments/{yyyy}/{mm}/{filename}
+    // users/{uid}/reports/{yyyy}/{mm}/{filename}
+    // users/{uid}/employees/documents/{yyyy}/{mm}/{filename}
+    match /users/{userId}/{folder}/{allPaths=**} {
+      allow read, delete: if isOwner(userId);
+      allow create, update: if isOwner(userId)
+        && isAllowedFolder(folder)
+        && hasValidSize()
+        && hasAllowedContentType()
+        && hasAllowedExtension();
+    }
+  }
+}
