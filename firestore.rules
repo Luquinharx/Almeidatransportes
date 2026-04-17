@@ -9,9 +9,15 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
-    // Usuário autenticado pode fazer tudo dentro do próprio escopo.
+    // Legacy scope by user (kept for backward compatibility).
     match /users/{userId}/{document=**} {
       allow read, write: if isOwner(userId);
+    }
+
+    // Shared scope for team accounts.
+    // Used when VITE_FINANCE_SCOPE_MODE=shared.
+    match /financeScopes/{scopeId}/{document=**} {
+      allow read, write: if isSignedIn();
     }
   }
 }

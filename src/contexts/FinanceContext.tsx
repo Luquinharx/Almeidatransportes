@@ -3,7 +3,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { findCategoryByKeyword, getFuelTransactionDescription, normalizeFinanceText } from "@/lib/finance";
 import { deleteAttachmentByPath } from "@/services/attachmentService";
 import { loadFinanceStateFromCache, saveFinanceStateToCache } from "@/services/financeLocalCache";
-import { saveFinanceState, subscribeFinanceState } from "@/services/financeFirestoreService";
+import { loadLegacyUserFinanceState, saveFinanceState, subscribeFinanceState } from "@/services/financeFirestoreService";
+import { toast } from "sonner";
 import type {
   AsphaltEntry,
   AsphaltSettings,
@@ -81,6 +82,44 @@ function buildStateHash(state: FinanceState) {
   return JSON.stringify(state);
 }
 
+function hasBusinessData(state: FinanceState) {
+  return (
+    state.transactions.length > 0 ||
+    state.fixedExpenses.length > 0 ||
+    state.asphaltEntries.length > 0 ||
+    state.fuelEntries.length > 0 ||
+    state.fuelPeriods.length > 0 ||
+    state.employees.length > 0
+  );
+}
+
+function getSyncErrorMessage(error: unknown) {
+  if (
+    typeof error === "object" &&
+    error &&
+    "code" in error &&
+    typeof (error as { code?: unknown }).code === "string"
+  ) {
+    const code = String((error as { code: string }).code);
+    if (code.includes("permission-denied")) {
+      return "Sem permissao no Firestore. Verifique as regras e o deploy.";
+    }
+    if (code.includes("unauthenticated")) {
+      return "Sessao expirada. Entre novamente para sincronizar.";
+    }
+    if (code.includes("unavailable")) {
+      return "Firestore indisponivel no momento. Tentando sincronizar novamente.";
+    }
+    return `Falha de sincronizacao: ${code}`;
+  }
+
+  if (error instanceof Error && error.message) {
+    return `Falha de sincronizacao: ${error.message}`;
+  }
+
+  return "Falha ao sincronizar com o Firestore.";
+}
+
 export function FinanceProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   const cachedState = useMemo(() => loadFinanceStateFromCache(), []);
@@ -98,6 +137,20 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
   const saveTimeoutRef = useRef<number | null>(null);
   const latestStateRef = useRef<FinanceState>(cachedState);
   const syncedStateHashRef = useRef(buildStateHash(cachedState));
+  const lastSyncErrorRef = useRef<string>("");
+
+  const reportSyncError = useCallback((error: unknown) => {
+    const message = getSyncErrorMessage(error);
+    if (lastSyncErrorRef.current !== message) {
+      toast.error(message);
+      lastSyncErrorRef.current = message;
+    }
+    console.error("Erro de sincronizacao Firestore:", error);
+  }, []);
+
+  const clearSyncError = useCallback(() => {
+    lastSyncErrorRef.current = "";
+  }, []);
 
   const currentState = useMemo<FinanceState>(
     () => ({
@@ -125,16 +178,41 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     }
 
     setRemoteReady(false);
+    let cancelled = false;
 
     const unsubscribe = subscribeFinanceState(
       user.uid,
-      (remoteState) => {
+      (remoteState, metadata) => {
         if (remoteState) {
-          const remoteHash = buildStateHash(remoteState);
-          syncedStateHashRef.current = remoteHash;
+          const localState = latestStateRef.current;
+          if (
+            !metadata.hasPendingWrites &&
+            !hasBusinessData(remoteState) &&
+            hasBusinessData(localState)
+          ) {
+            void saveFinanceState(user.uid, localState)
+              .then(() => {
+                if (cancelled) return;
+                syncedStateHashRef.current = buildStateHash(localState);
+                clearSyncError();
+                setRemoteReady(true);
+              })
+              .catch((error) => {
+                if (cancelled) return;
+                reportSyncError(error);
+                setRemoteReady(true);
+              });
+            return;
+          }
 
-          const localHash = buildStateHash(latestStateRef.current);
-          if (remoteHash !== localHash) {
+          const remoteHash = buildStateHash(remoteState);
+          if (!metadata.hasPendingWrites) {
+            syncedStateHashRef.current = remoteHash;
+            clearSyncError();
+          }
+
+          const localHash = buildStateHash(localState);
+          if (!metadata.hasPendingWrites && remoteHash !== localHash) {
             setCategories(remoteState.categories);
             setTransactions(remoteState.transactions);
             setFixedExpenses(remoteState.fixedExpenses);
@@ -144,26 +222,66 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
             setFuelPeriods(remoteState.fuelPeriods);
             setEmployees(remoteState.employees);
           }
-        } else {
-          const localState = latestStateRef.current;
-          syncedStateHashRef.current = buildStateHash(localState);
-          void saveFinanceState(user.uid, localState).catch((error) => {
-            console.error("Falha ao salvar estado inicial no Firestore:", error);
-          });
+          if (!cancelled) {
+            setRemoteReady(true);
+          }
+          return;
         }
 
-        setRemoteReady(true);
+        void (async () => {
+          const localState = latestStateRef.current;
+          let seedState = localState;
+
+          if (!hasBusinessData(localState)) {
+            try {
+              const legacyState = await loadLegacyUserFinanceState(user.uid);
+              if (legacyState && hasBusinessData(legacyState)) {
+                seedState = legacyState;
+              }
+            } catch (error) {
+              if (!cancelled) reportSyncError(error);
+            }
+          }
+
+          if (cancelled) return;
+
+          if (buildStateHash(seedState) !== buildStateHash(localState)) {
+            setCategories(seedState.categories);
+            setTransactions(seedState.transactions);
+            setFixedExpenses(seedState.fixedExpenses);
+            setAsphaltEntries(seedState.asphaltEntries);
+            setAsphaltSettings(seedState.asphaltSettings);
+            setFuelEntries(seedState.fuelEntries);
+            setFuelPeriods(seedState.fuelPeriods);
+            setEmployees(seedState.employees);
+          }
+
+          try {
+            await saveFinanceState(user.uid, seedState);
+            if (cancelled) return;
+            syncedStateHashRef.current = buildStateHash(seedState);
+            clearSyncError();
+          } catch (error) {
+            if (cancelled) return;
+            reportSyncError(error);
+          } finally {
+            if (!cancelled) {
+              setRemoteReady(true);
+            }
+          }
+        })();
       },
       (error) => {
-        console.error("Falha ao sincronizar Firestore:", error);
+        reportSyncError(error);
         setRemoteReady(true);
       },
     );
 
     return () => {
+      cancelled = true;
       unsubscribe();
     };
-  }, [user?.uid]);
+  }, [clearSyncError, reportSyncError, user?.uid]);
 
   useEffect(() => {
     if (!user?.uid || !remoteReady) return;
@@ -179,9 +297,10 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       void saveFinanceState(user.uid, currentState)
         .then(() => {
           syncedStateHashRef.current = currentHash;
+          clearSyncError();
         })
         .catch((error) => {
-          console.error("Falha ao salvar estado no Firestore:", error);
+          reportSyncError(error);
         });
     }, 500);
 
@@ -190,7 +309,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
         window.clearTimeout(saveTimeoutRef.current);
       }
     };
-  }, [currentState, remoteReady, user?.uid]);
+  }, [clearSyncError, currentState, remoteReady, reportSyncError, user?.uid]);
 
   const resolveAsphaltCategoryId = useCallback(() => {
     const configured = categories.find(
