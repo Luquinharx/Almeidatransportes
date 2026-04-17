@@ -1,9 +1,22 @@
 import { useMemo, useState } from "react";
 import { useFinance, Transaction } from "@/contexts/FinanceContext";
+import { findCategoryByKeyword, getTransactionEffectiveType } from "@/lib/finance";
 import KpiCard from "@/components/KpiCard";
-import { TrendingUp, TrendingDown, Wallet, Clock, CalendarClock, BarChart3, ArrowUpRight, ArrowDownRight, Minus } from "lucide-react";
+import { TrendingUp, TrendingDown, Wallet, Clock, CalendarClock, ArrowUpRight, ArrowDownRight, Minus, Users } from "lucide-react";
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
-import { format, startOfMonth, endOfMonth, subMonths, subWeeks, isWithinInterval, parseISO, differenceInDays, startOfWeek, endOfWeek } from "date-fns";
+import {
+  differenceInDays,
+  eachMonthOfInterval,
+  endOfMonth,
+  endOfWeek,
+  format,
+  isWithinInterval,
+  parseISO,
+  startOfMonth,
+  startOfWeek,
+  subMonths,
+  subWeeks,
+} from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
@@ -20,7 +33,10 @@ const PERIODS = [
 function getRange(period: string) {
   const now = new Date();
   if (period === "current") return { start: startOfMonth(now), end: endOfMonth(now) };
-  if (period === "last") { const m = subMonths(now, 1); return { start: startOfMonth(m), end: endOfMonth(m) }; }
+  if (period === "last") {
+    const lastMonth = subMonths(now, 1);
+    return { start: startOfMonth(lastMonth), end: endOfMonth(lastMonth) };
+  }
   if (period === "3months") return { start: startOfMonth(subMonths(now, 2)), end: endOfMonth(now) };
   return { start: new Date(now.getFullYear(), 0, 1), end: endOfMonth(now) };
 }
@@ -32,57 +48,128 @@ function TrendIcon({ value }: { value: number }) {
 }
 
 export default function Dashboard() {
-  const { transactions, categories, fixedExpenses, asphaltEntries } = useFinance();
+  const { transactions, categories, fixedExpenses, asphaltEntries, employees } = useFinance();
   const [period, setPeriod] = useState("current");
 
   const { start, end } = useMemo(() => getRange(period), [period]);
 
-  const filtered = useMemo(() => {
-    return transactions.filter(t => {
-      const d = parseISO(t.date);
-      return isWithinInterval(d, { start, end });
-    });
-  }, [transactions, start, end]);
+  const filtered = useMemo(
+    () =>
+      transactions.filter((transaction) =>
+        isWithinInterval(parseISO(transaction.date), { start, end }),
+      ),
+    [transactions, start, end],
+  );
 
-  const totalIncome = useMemo(() => filtered.filter(t => t.type === "entrada").reduce((s, t) => s + t.amount, 0), [filtered]);
-  const totalExpense = useMemo(() => filtered.filter(t => t.type === "saida").reduce((s, t) => s + t.amount, 0), [filtered]);
+  const filteredWithType = useMemo(
+    () =>
+      filtered.map((transaction) => ({
+        transaction,
+        type: getTransactionEffectiveType(transaction, categories),
+      })),
+    [filtered, categories],
+  );
+
+  const activeEmployees = useMemo(() => employees.filter((employee) => employee.active), [employees]);
+  const monthlyPayroll = useMemo(
+    () => activeEmployees.reduce((sum, employee) => sum + employee.salary, 0),
+    [activeEmployees],
+  );
+  const monthsInRange = useMemo(
+    () => eachMonthOfInterval({ start: startOfMonth(start), end: startOfMonth(end) }).length,
+    [start, end],
+  );
+  const payrollExpenseInRange = monthlyPayroll * monthsInRange;
+
+  const salaryCategory = useMemo(
+    () =>
+      categories.find((category) => category.id === "cat_salarios") ??
+      findCategoryByKeyword(categories, "salario"),
+    [categories],
+  );
+
+  const expenseTransactions = useMemo(
+    () =>
+      filteredWithType
+        .filter((item) => item.type === "saida")
+        .map((item) => item.transaction),
+    [filteredWithType],
+  );
+
+  const totalIncome = useMemo(
+    () =>
+      filteredWithType
+        .filter((item) => item.type === "entrada")
+        .reduce((sum, item) => sum + item.transaction.amount, 0),
+    [filteredWithType],
+  );
+
+  const transactionExpenseTotal = useMemo(
+    () =>
+      filteredWithType
+        .filter((item) => item.type === "saida")
+        .reduce((sum, item) => sum + item.transaction.amount, 0),
+    [filteredWithType],
+  );
+
+  const totalExpense = transactionExpenseTotal + payrollExpenseInRange;
   const balance = totalIncome - totalExpense;
-  const pendingCount = useMemo(() => filtered.filter(t => t.status === "pendente").length, [filtered]);
-  const fixedTotal = useMemo(() => fixedExpenses.filter(f => f.active).reduce((s, f) => s + f.amount, 0), [fixedExpenses]);
+  const pendingCount = useMemo(
+    () => filteredWithType.filter((item) => item.transaction.status === "pendente").length,
+    [filteredWithType],
+  );
+  const fixedExpensesTotal = useMemo(
+    () => fixedExpenses.filter((expense) => expense.active).reduce((sum, expense) => sum + expense.amount, 0),
+    [fixedExpenses],
+  );
 
-  // Analytics
   const analytics = useMemo(() => {
     const days = Math.max(1, differenceInDays(end, start) + 1);
-    const expenses = filtered.filter(t => t.type === "saida");
-    const avgDailyCost = expenses.reduce((s, t) => s + t.amount, 0) / days;
+    const avgDailyCost = (transactionExpenseTotal + payrollExpenseInRange) / days;
 
-    // Average by category
     const catMap = new Map<string, { total: number; name: string; color: string }>();
-    expenses.forEach(t => {
-      const cat = categories.find(c => c.id === t.categoryId);
-      const key = cat?.id ?? "none";
-      const curr = catMap.get(key) ?? { total: 0, name: cat?.name ?? "Outros", color: cat?.color ?? "#94a3b8" };
-      curr.total += t.amount;
-      catMap.set(key, curr);
-    });
-    const avgByCategory = Array.from(catMap.values()).map(c => ({
-      ...c, avg: c.total / days
-    })).sort((a, b) => b.total - a.total).slice(0, 5);
 
-    // Asphalt stats
-    const periodAsphalt = asphaltEntries.filter(e => {
-      const d = parseISO(e.date);
-      return isWithinInterval(d, { start, end });
+    expenseTransactions.forEach((transaction) => {
+      const category = categories.find((item) => item.id === transaction.categoryId);
+      const key = category?.id ?? "none";
+      const current = catMap.get(key) ?? {
+        total: 0,
+        name: category?.name ?? "Outros",
+        color: category?.color ?? "#94a3b8",
+      };
+      current.total += transaction.amount;
+      catMap.set(key, current);
     });
-    const totalAsphaltTons = periodAsphalt.reduce((s, e) => s + e.tons, 0);
-    const avgAsphaltDaily = periodAsphalt.length > 0
-      ? totalAsphaltTons / new Set(periodAsphalt.map(e => e.date)).size
-      : 0;
-    const avgPricePerTon = periodAsphalt.length > 0 && totalAsphaltTons > 0
-      ? periodAsphalt.reduce((s, e) => s + e.total, 0) / totalAsphaltTons
-      : 0;
 
-    // Week comparison
+    if (payrollExpenseInRange > 0) {
+      const payrollKey = salaryCategory?.id ?? "payroll";
+      const payroll = catMap.get(payrollKey) ?? {
+        total: 0,
+        name: salaryCategory?.name ?? "Salarios",
+        color: salaryCategory?.color ?? "#8b5cf6",
+      };
+      payroll.total += payrollExpenseInRange;
+      catMap.set(payrollKey, payroll);
+    }
+
+    const avgByCategory = Array.from(catMap.values())
+      .map((item) => ({ ...item, avg: item.total / days }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 5);
+
+    const periodAsphalt = asphaltEntries.filter((entry) =>
+      isWithinInterval(parseISO(entry.date), { start, end }),
+    );
+    const totalAsphaltTons = periodAsphalt.reduce((sum, entry) => sum + entry.tons, 0);
+    const avgAsphaltDaily =
+      periodAsphalt.length > 0
+        ? totalAsphaltTons / new Set(periodAsphalt.map((entry) => entry.date)).size
+        : 0;
+    const avgPricePerTon =
+      periodAsphalt.length > 0 && totalAsphaltTons > 0
+        ? periodAsphalt.reduce((sum, entry) => sum + entry.total, 0) / totalAsphaltTons
+        : 0;
+
     const now = new Date();
     const thisWeekStart = startOfWeek(now, { weekStartsOn: 1 });
     const thisWeekEnd = endOfWeek(now, { weekStartsOn: 1 });
@@ -90,141 +177,221 @@ export default function Dashboard() {
     const lastWeekEnd = subWeeks(thisWeekEnd, 1);
 
     const thisWeekExpense = transactions
-      .filter(t => t.type === "saida" && isWithinInterval(parseISO(t.date), { start: thisWeekStart, end: thisWeekEnd }))
-      .reduce((s, t) => s + t.amount, 0);
-    const lastWeekExpense = transactions
-      .filter(t => t.type === "saida" && isWithinInterval(parseISO(t.date), { start: lastWeekStart, end: lastWeekEnd }))
-      .reduce((s, t) => s + t.amount, 0);
-    const weekTrend = lastWeekExpense > 0
-      ? ((thisWeekExpense - lastWeekExpense) / lastWeekExpense) * 100
-      : 0;
+      .filter((transaction) => {
+        const type = getTransactionEffectiveType(transaction, categories);
+        return type === "saida" && isWithinInterval(parseISO(transaction.date), { start: thisWeekStart, end: thisWeekEnd });
+      })
+      .reduce((sum, transaction) => sum + transaction.amount, 0);
 
-    // Month comparison
+    const lastWeekExpense = transactions
+      .filter((transaction) => {
+        const type = getTransactionEffectiveType(transaction, categories);
+        return type === "saida" && isWithinInterval(parseISO(transaction.date), { start: lastWeekStart, end: lastWeekEnd });
+      })
+      .reduce((sum, transaction) => sum + transaction.amount, 0);
+
+    const weekTrend = lastWeekExpense > 0 ? ((thisWeekExpense - lastWeekExpense) / lastWeekExpense) * 100 : 0;
+
     const thisMonthStart = startOfMonth(now);
     const thisMonthEnd = endOfMonth(now);
     const lastMonthStart = startOfMonth(subMonths(now, 1));
     const lastMonthEnd = endOfMonth(subMonths(now, 1));
 
-    const thisMonthExpense = transactions
-      .filter(t => t.type === "saida" && isWithinInterval(parseISO(t.date), { start: thisMonthStart, end: thisMonthEnd }))
-      .reduce((s, t) => s + t.amount, 0);
-    const lastMonthExpense = transactions
-      .filter(t => t.type === "saida" && isWithinInterval(parseISO(t.date), { start: lastMonthStart, end: lastMonthEnd }))
-      .reduce((s, t) => s + t.amount, 0);
-    const monthTrend = lastMonthExpense > 0
-      ? ((thisMonthExpense - lastMonthExpense) / lastMonthExpense) * 100
-      : 0;
+    const thisMonthExpense =
+      transactions
+        .filter((transaction) => {
+          const type = getTransactionEffectiveType(transaction, categories);
+          return type === "saida" && isWithinInterval(parseISO(transaction.date), { start: thisMonthStart, end: thisMonthEnd });
+        })
+        .reduce((sum, transaction) => sum + transaction.amount, 0) +
+      monthlyPayroll;
 
-    return { avgDailyCost, avgByCategory, avgAsphaltDaily, avgPricePerTon, weekTrend, monthTrend, thisWeekExpense, lastWeekExpense };
-  }, [filtered, categories, asphaltEntries, transactions, start, end]);
+    const lastMonthExpense =
+      transactions
+        .filter((transaction) => {
+          const type = getTransactionEffectiveType(transaction, categories);
+          return type === "saida" && isWithinInterval(parseISO(transaction.date), { start: lastMonthStart, end: lastMonthEnd });
+        })
+        .reduce((sum, transaction) => sum + transaction.amount, 0) +
+      monthlyPayroll;
+
+    const monthTrend = lastMonthExpense > 0 ? ((thisMonthExpense - lastMonthExpense) / lastMonthExpense) * 100 : 0;
+
+    return {
+      avgDailyCost,
+      avgByCategory,
+      avgAsphaltDaily,
+      avgPricePerTon,
+      weekTrend,
+      monthTrend,
+      thisWeekExpense,
+    };
+  }, [
+    asphaltEntries,
+    categories,
+    end,
+    expenseTransactions,
+    monthlyPayroll,
+    payrollExpenseInRange,
+    salaryCategory?.color,
+    salaryCategory?.id,
+    salaryCategory?.name,
+    start,
+    transactionExpenseTotal,
+    transactions,
+  ]);
 
   const pieData = useMemo(() => {
-    const map = new Map<string, number>();
-    filtered.filter(t => t.type === "saida").forEach(t => {
-      const cat = categories.find(c => c.id === t.categoryId);
-      const name = cat?.name ?? "Sem categoria";
-      map.set(name, (map.get(name) ?? 0) + t.amount);
+    const map = new Map<string, { value: number; color: string }>();
+
+    expenseTransactions.forEach((transaction) => {
+      const category = categories.find((item) => item.id === transaction.categoryId);
+      const name = category?.name ?? "Sem categoria";
+      const current = map.get(name) ?? { value: 0, color: category?.color ?? "#94a3b8" };
+      current.value += transaction.amount;
+      map.set(name, current);
     });
-    return Array.from(map.entries()).map(([name, value]) => ({
-      name, value, color: categories.find(c => c.name === name)?.color ?? "#94a3b8"
-    })).sort((a, b) => b.value - a.value);
-  }, [filtered, categories]);
+
+    if (payrollExpenseInRange > 0) {
+      const name = salaryCategory?.name ?? "Salarios";
+      const current = map.get(name) ?? { value: 0, color: salaryCategory?.color ?? "#8b5cf6" };
+      current.value += payrollExpenseInRange;
+      map.set(name, current);
+    }
+
+    return Array.from(map.entries())
+      .map(([name, item]) => ({ name, value: item.value, color: item.color }))
+      .sort((a, b) => b.value - a.value);
+  }, [categories, expenseTransactions, payrollExpenseInRange, salaryCategory?.color, salaryCategory?.name]);
 
   const barData = useMemo(() => {
+    const monthStarts = Array.from({ length: 6 }, (_, index) => startOfMonth(subMonths(new Date(), 5 - index)));
     const months = new Map<string, { entradas: number; saidas: number }>();
-    const ordered = [...transactions].sort((a, b) => a.date.localeCompare(b.date));
-    ordered.forEach(t => {
-      const key = format(parseISO(t.date), "MMM/yy", { locale: ptBR });
-      const curr = months.get(key) ?? { entradas: 0, saidas: 0 };
-      if (t.type === "entrada") curr.entradas += t.amount;
-      else curr.saidas += t.amount;
-      months.set(key, curr);
-    });
-    return Array.from(months.entries()).slice(-6).map(([name, v]) => ({ name, ...v }));
-  }, [transactions]);
 
-  const topExpenses = useMemo(() =>
-    filtered.filter(t => t.type === "saida").sort((a, b) => b.amount - a.amount).slice(0, 5),
-  [filtered]);
+    monthStarts.forEach((monthStart) => {
+      const key = format(monthStart, "MMM/yy", { locale: ptBR });
+      months.set(key, { entradas: 0, saidas: monthlyPayroll });
+    });
+
+    transactions.forEach((transaction) => {
+      const monthKey = format(parseISO(transaction.date), "MMM/yy", { locale: ptBR });
+      const current = months.get(monthKey);
+      if (!current) return;
+      const type = getTransactionEffectiveType(transaction, categories);
+      if (type === "entrada") current.entradas += transaction.amount;
+      else current.saidas += transaction.amount;
+    });
+
+    return monthStarts.map((monthStart) => {
+      const key = format(monthStart, "MMM/yy", { locale: ptBR });
+      const value = months.get(key) ?? { entradas: 0, saidas: 0 };
+      return { name: key, ...value };
+    });
+  }, [transactions, categories, monthlyPayroll]);
+
+  const payrollTopExpense = useMemo<Transaction | null>(() => {
+    if (payrollExpenseInRange <= 0) return null;
+    return {
+      id: `payroll-${period}`,
+      type: "saida",
+      amount: payrollExpenseInRange,
+      date: end.toISOString().slice(0, 10),
+      categoryId: salaryCategory?.id ?? "cat_salarios",
+      description: `Folha salarial (${monthsInRange} mes(es), ${activeEmployees.length} funcionario(s))`,
+      status: "pago",
+      paymentMethod: "transferencia",
+    };
+  }, [activeEmployees.length, end, monthsInRange, payrollExpenseInRange, period, salaryCategory?.id]);
+
+  const topExpenses = useMemo(() => {
+    const list = payrollTopExpense ? [...expenseTransactions, payrollTopExpense] : [...expenseTransactions];
+    return list.sort((a, b) => b.amount - a.amount).slice(0, 5);
+  }, [expenseTransactions, payrollTopExpense]);
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h3 className="text-xl font-bold text-foreground">Visão Geral</h3>
+        <h3 className="text-xl font-bold text-foreground">Visao Geral</h3>
         <Select value={period} onValueChange={setPeriod}>
           <SelectTrigger className="w-44">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {PERIODS.map(p => <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>)}
+            {PERIODS.map((item) => (
+              <SelectItem key={item.value} value={item.value}>
+                {item.label}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
       </div>
 
-      {/* KPIs */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
         <KpiCard title="Entradas" value={fmt(totalIncome)} icon={TrendingUp} valueColor={totalIncome > 0 ? "green" : "black"} />
-        <KpiCard title="Saídas" value={fmt(totalExpense)} icon={TrendingDown} valueColor={totalExpense > 0 ? "red" : "black"} />
+        <KpiCard title="Saidas" value={fmt(totalExpense)} icon={TrendingDown} valueColor={totalExpense > 0 ? "red" : "black"} />
         <KpiCard title="Saldo" value={fmt(balance)} icon={Wallet} valueColor={balance > 0 ? "green" : balance < 0 ? "red" : "black"} />
-        <KpiCard title="Pendentes" value={String(pendingCount)} icon={Clock} valueColor={pendingCount > 0 ? "black" : "black"} />
-        <KpiCard title="Fixas/mês" value={fmt(fixedTotal)} icon={CalendarClock} valueColor={fixedTotal > 0 ? "red" : "black"} />
+        <KpiCard title="Pendentes" value={String(pendingCount)} icon={Clock} valueColor="black" />
+        <KpiCard title="Folha salarial/mes" value={fmt(monthlyPayroll)} icon={Users} valueColor={monthlyPayroll > 0 ? "red" : "black"} />
+        <KpiCard title="Despesas fixas/mes" value={fmt(fixedExpensesTotal)} icon={CalendarClock} valueColor={fixedExpensesTotal > 0 ? "red" : "black"} />
       </div>
 
-      {/* Insights Cards */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded-xl border bg-card p-4 shadow-sm">
-          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Custo Médio Diário</p>
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Custo Medio Diario</p>
           <p className="mt-2 text-xl font-bold text-card-foreground">{fmt(analytics.avgDailyCost)}</p>
         </div>
         <div className="rounded-xl border bg-card p-4 shadow-sm">
-          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Asfalto Médio/Dia</p>
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Asfalto Medio/Dia</p>
           <p className="mt-2 text-xl font-bold text-card-foreground">
             {analytics.avgAsphaltDaily > 0 ? `${analytics.avgAsphaltDaily.toFixed(2)}t` : "—"}
           </p>
           {analytics.avgPricePerTon > 0 && (
-            <p className="text-xs text-muted-foreground mt-1">{fmt(analytics.avgPricePerTon)}/ton</p>
+            <p className="mt-1 text-xs text-muted-foreground">{fmt(analytics.avgPricePerTon)}/ton</p>
           )}
         </div>
         <div className="rounded-xl border bg-card p-4 shadow-sm">
           <div className="flex items-center justify-between">
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Semana vs Anterior</p>
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Semana vs Anterior</p>
             <TrendIcon value={analytics.weekTrend} />
           </div>
-          <p className={cn(
-            "mt-2 text-xl font-bold",
-            analytics.weekTrend > 0 ? "text-rose-500" : analytics.weekTrend < 0 ? "text-emerald-500" : "text-foreground"
-          )}>
+          <p
+            className={cn(
+              "mt-2 text-xl font-bold",
+              analytics.weekTrend > 0 ? "text-rose-500" : analytics.weekTrend < 0 ? "text-emerald-500" : "text-foreground",
+            )}
+          >
             {analytics.weekTrend !== 0 ? `${analytics.weekTrend > 0 ? "+" : ""}${analytics.weekTrend.toFixed(1)}%` : "—"}
           </p>
-          <p className="text-xs text-muted-foreground mt-1">{fmt(analytics.thisWeekExpense)} esta semana</p>
+          <p className="mt-1 text-xs text-muted-foreground">{fmt(analytics.thisWeekExpense)} esta semana</p>
         </div>
         <div className="rounded-xl border bg-card p-4 shadow-sm">
           <div className="flex items-center justify-between">
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Mês vs Anterior</p>
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Mes vs Anterior</p>
             <TrendIcon value={analytics.monthTrend} />
           </div>
-          <p className={cn(
-            "mt-2 text-xl font-bold",
-            analytics.monthTrend > 0 ? "text-rose-500" : analytics.monthTrend < 0 ? "text-emerald-500" : "text-foreground"
-          )}>
+          <p
+            className={cn(
+              "mt-2 text-xl font-bold",
+              analytics.monthTrend > 0 ? "text-rose-500" : analytics.monthTrend < 0 ? "text-emerald-500" : "text-foreground",
+            )}
+          >
             {analytics.monthTrend !== 0 ? `${analytics.monthTrend > 0 ? "+" : ""}${analytics.monthTrend.toFixed(1)}%` : "—"}
           </p>
         </div>
       </div>
 
-      {/* Average by category */}
       {analytics.avgByCategory.length > 0 && (
         <div className="rounded-xl border bg-card p-5 shadow-sm">
-          <h4 className="mb-4 font-semibold text-card-foreground">Média de Custo por Categoria (diário)</h4>
+          <h4 className="mb-4 font-semibold text-card-foreground">Media de Custo por Categoria (diario)</h4>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {analytics.avgByCategory.map(c => (
-              <div key={c.name} className="flex items-center gap-3 rounded-lg bg-secondary/50 px-4 py-3">
-                <div className="h-3 w-3 rounded-full" style={{ backgroundColor: c.color }} />
+            {analytics.avgByCategory.map((item) => (
+              <div key={item.name} className="flex items-center gap-3 rounded-lg bg-secondary/50 px-4 py-3">
+                <div className="h-3 w-3 rounded-full" style={{ backgroundColor: item.color }} />
                 <div className="flex-1">
-                  <p className="text-sm font-medium text-card-foreground">{c.name}</p>
-                  <p className="text-xs text-muted-foreground">Total: {fmt(c.total)}</p>
+                  <p className="text-sm font-medium text-card-foreground">{item.name}</p>
+                  <p className="text-xs text-muted-foreground">Total: {fmt(item.total)}</p>
                 </div>
-                <span className="text-sm font-semibold text-card-foreground">{fmt(c.avg)}/dia</span>
+                <span className="text-sm font-semibold text-card-foreground">{fmt(item.avg)}/dia</span>
               </div>
             ))}
           </div>
@@ -232,26 +399,36 @@ export default function Dashboard() {
       )}
 
       <div className="grid gap-6 lg:grid-cols-2">
-        {/* Pie Chart */}
         <div className="rounded-xl border bg-card p-5 shadow-sm">
           <h4 className="mb-4 font-semibold text-card-foreground">Despesas por Categoria</h4>
           {pieData.length === 0 ? (
-            <p className="py-10 text-center text-sm text-muted-foreground">Nenhuma despesa no período</p>
+            <p className="py-10 text-center text-sm text-muted-foreground">Nenhuma despesa no periodo</p>
           ) : (
             <ResponsiveContainer width="100%" height={280}>
               <PieChart>
-                <Pie data={pieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={100} label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`} labelLine={false} fontSize={12}>
-                  {pieData.map((d, i) => <Cell key={i} fill={d.color} />)}
+                <Pie
+                  data={pieData}
+                  dataKey="value"
+                  nameKey="name"
+                  cx="50%"
+                  cy="50%"
+                  outerRadius={100}
+                  label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                  labelLine={false}
+                  fontSize={12}
+                >
+                  {pieData.map((item, index) => (
+                    <Cell key={index} fill={item.color} />
+                  ))}
                 </Pie>
-                <Tooltip formatter={(v: number) => fmt(v)} />
+                <Tooltip formatter={(value: number) => fmt(value)} />
               </PieChart>
             </ResponsiveContainer>
           )}
         </div>
 
-        {/* Bar Chart */}
         <div className="rounded-xl border bg-card p-5 shadow-sm">
-          <h4 className="mb-4 font-semibold text-card-foreground">Evolução Mensal</h4>
+          <h4 className="mb-4 font-semibold text-card-foreground">Evolucao Mensal</h4>
           {barData.length === 0 ? (
             <p className="py-10 text-center text-sm text-muted-foreground">Sem dados para exibir</p>
           ) : (
@@ -259,36 +436,37 @@ export default function Dashboard() {
               <BarChart data={barData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(220 13% 91%)" />
                 <XAxis dataKey="name" fontSize={12} />
-                <YAxis fontSize={12} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
-                <Tooltip formatter={(v: number) => fmt(v)} />
+                <YAxis fontSize={12} tickFormatter={(value) => `${(value / 1000).toFixed(0)}k`} />
+                <Tooltip formatter={(value: number) => fmt(value)} />
                 <Legend />
                 <Bar dataKey="entradas" fill="hsl(160 64% 43%)" radius={[4, 4, 0, 0]} name="Entradas" />
-                <Bar dataKey="saidas" fill="hsl(0 72% 51%)" radius={[4, 4, 0, 0]} name="Saídas" />
+                <Bar dataKey="saidas" fill="hsl(0 72% 51%)" radius={[4, 4, 0, 0]} name="Saidas" />
               </BarChart>
             </ResponsiveContainer>
           )}
         </div>
       </div>
 
-      {/* Top expenses */}
       <div className="rounded-xl border bg-card p-5 shadow-sm">
-        <h4 className="mb-4 font-semibold text-card-foreground">Maiores Despesas do Período</h4>
+        <h4 className="mb-4 font-semibold text-card-foreground">Maiores Despesas do Periodo</h4>
         {topExpenses.length === 0 ? (
           <p className="text-sm text-muted-foreground">Nenhuma despesa encontrada</p>
         ) : (
           <div className="space-y-3">
-            {topExpenses.map(t => {
-              const cat = categories.find(c => c.id === t.categoryId);
+            {topExpenses.map((transaction) => {
+              const category = categories.find((item) => item.id === transaction.categoryId);
               return (
-                <div key={t.id} className="flex items-center justify-between rounded-lg bg-secondary/50 px-4 py-3">
+                <div key={transaction.id} className="flex items-center justify-between rounded-lg bg-secondary/50 px-4 py-3">
                   <div className="flex items-center gap-3">
-                    <div className="h-3 w-3 rounded-full" style={{ backgroundColor: cat?.color ?? "#94a3b8" }} />
+                    <div className="h-3 w-3 rounded-full" style={{ backgroundColor: category?.color ?? "#94a3b8" }} />
                     <div>
-                      <p className="text-sm font-medium text-card-foreground">{t.description}</p>
-                      <p className="text-xs text-muted-foreground">{cat?.name} · {format(parseISO(t.date), "dd/MM/yyyy")}</p>
+                      <p className="text-sm font-medium text-card-foreground">{transaction.description}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {category?.name} · {format(parseISO(transaction.date), "dd/MM/yyyy")}
+                      </p>
                     </div>
                   </div>
-                  <span className="text-sm font-semibold text-expense">{fmt(t.amount)}</span>
+                  <span className="text-sm font-semibold text-expense">{fmt(transaction.amount)}</span>
                 </div>
               );
             })}

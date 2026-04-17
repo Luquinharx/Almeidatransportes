@@ -52,6 +52,7 @@ export interface FuelEntry {
   liters?: number;
   description: string;
   periodId?: string;
+  transactionId?: string;
 }
 
 export interface FuelPeriod {
@@ -94,7 +95,7 @@ export const DEFAULT_CATEGORIES: Category[] = [
   { id: "cat_marketing", name: "Marketing", type: "saida", color: "#f59e0b" },
   { id: "cat_alimentacao", name: "Alimentação", type: "saida", color: "#ec4899" },
   { id: "cat_transporte", name: "Transporte", type: "saida", color: "#06b6d4" },
-  { id: "cat_asfalto", name: "Asfalto", type: "saida", color: "#374151" },
+  { id: "cat_asfalto", name: "Asfalto", type: "entrada", color: "#374151" },
   { id: "cat_combustivel", name: "Combustível", type: "saida", color: "#d97706" },
   { id: "cat_outros", name: "Outros", type: "ambos", color: "#f97316" },
 ];

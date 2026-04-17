@@ -110,8 +110,8 @@ export default function Asphalt() {
             <p className="mt-1 text-2xl font-bold text-card-foreground">{stats.totalTons.toFixed(2)}t</p>
           </div>
           <div className="rounded-xl border bg-card p-4 shadow-sm">
-            <p className="text-sm text-muted-foreground">Custo Total</p>
-            <p className="mt-1 text-2xl font-bold text-expense">{fmt(stats.totalCost)}</p>
+            <p className="text-sm text-muted-foreground">Receita Total</p>
+            <p className="mt-1 text-2xl font-bold text-income">{fmt(stats.totalCost)}</p>
           </div>
           <div className="rounded-xl border bg-card p-4 shadow-sm">
             <p className="text-sm text-muted-foreground">Preço Médio/Ton</p>
@@ -145,7 +145,7 @@ export default function Asphalt() {
                 <td className="px-4 py-3 text-card-foreground">{format(parseISO(e.date), "dd/MM/yyyy")}</td>
                 <td className="px-4 py-3 text-right font-medium text-card-foreground">{e.tons.toFixed(2)}t</td>
                 <td className="px-4 py-3 text-right text-muted-foreground">{fmt(e.pricePerTon)}</td>
-                <td className="px-4 py-3 text-right font-semibold text-expense">{fmt(e.total)}</td>
+                <td className="px-4 py-3 text-right font-semibold text-income">{fmt(e.total)}</td>
                 <td className="px-4 py-3 text-right">
                   <button onClick={() => deleteAsphaltEntry(e.id)} className="rounded p-1.5 hover:bg-destructive/10">
                     <Trash2 className="h-4 w-4 text-destructive" />
@@ -208,7 +208,7 @@ export default function Asphalt() {
               <Select value={settingCat} onValueChange={setSettingCat}>
                 <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
                 <SelectContent>
-                  {categories.filter(c => c.type === "saida" || c.type === "ambos").map(c => (
+                  {categories.filter(c => c.type === "entrada" || c.type === "ambos").map(c => (
                     <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
                   ))}
                 </SelectContent>

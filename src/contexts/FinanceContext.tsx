@@ -1,5 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { findCategoryByKeyword, getFuelTransactionDescription, normalizeFinanceText } from "@/lib/finance";
 import { deleteAttachmentByPath } from "@/services/attachmentService";
 import { loadFinanceStateFromCache, saveFinanceStateToCache } from "@/services/financeLocalCache";
 import { saveFinanceState, subscribeFinanceState } from "@/services/financeFirestoreService";
@@ -65,6 +66,16 @@ interface FinanceContextType {
 const FinanceContext = createContext<FinanceContextType | null>(null);
 
 const uid = () => crypto.randomUUID();
+
+function sanitizeFuelAmount(amount: number | undefined) {
+  if (typeof amount !== "number" || !Number.isFinite(amount) || amount < 0) return 0;
+  return amount;
+}
+
+function sanitizeFuelLiters(liters: number | undefined) {
+  if (typeof liters !== "number" || !Number.isFinite(liters) || liters <= 0) return undefined;
+  return liters;
+}
 
 export function FinanceProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
@@ -161,6 +172,79 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     };
   }, [currentState, user?.uid]);
 
+  const resolveAsphaltCategoryId = useCallback(() => {
+    const configured = categories.find(
+      (category) => category.id === asphaltSettings.categoryId && category.type !== "saida",
+    );
+    if (configured) return configured.id;
+
+    const defaultById = categories.find((category) => category.id === "cat_asfalto" && category.type !== "saida");
+    if (defaultById) return defaultById.id;
+
+    const byKeyword = findCategoryByKeyword(categories, "asfalto");
+    if (byKeyword && byKeyword.type !== "saida") return byKeyword.id;
+
+    const fallback = categories.find((category) => category.type === "entrada" || category.type === "ambos");
+    return fallback?.id ?? categories[0]?.id ?? "";
+  }, [asphaltSettings.categoryId, categories]);
+
+  const resolveFuelCategoryId = useCallback(() => {
+    const defaultById = categories.find((category) => category.id === "cat_combustivel" && category.type !== "entrada");
+    if (defaultById) return defaultById.id;
+
+    const byKeyword = findCategoryByKeyword(categories, "combust");
+    if (byKeyword && byKeyword.type !== "entrada") return byKeyword.id;
+
+    const fallback = categories.find((category) => category.type === "saida" || category.type === "ambos");
+    return fallback?.id ?? categories[0]?.id ?? "";
+  }, [categories]);
+
+  const normalizeTransaction = useCallback((tx: Omit<Transaction, "id"> & { id?: string }) => {
+    const category = categories.find((item) => item.id === tx.categoryId);
+    const categoryName = normalizeFinanceText(category?.name ?? "");
+    if (categoryName.includes("asfalto")) {
+      return {
+        ...tx,
+        type: "entrada" as const,
+      };
+    }
+    if (categoryName.includes("combust")) {
+      return {
+        ...tx,
+        type: "saida" as const,
+      };
+    }
+    const normalizedType = !category || category.type === "ambos" ? tx.type : category.type;
+    return {
+      ...tx,
+      type: normalizedType,
+    };
+  }, [categories]);
+
+  useEffect(() => {
+    const nextCategories = categories.map((category) => {
+      const name = normalizeFinanceText(category.name);
+      const isAsphaltCategory =
+        category.id === asphaltSettings.categoryId ||
+        category.id === "cat_asfalto" ||
+        name.includes("asfalto");
+
+      if (!isAsphaltCategory || category.type !== "saida") {
+        return category;
+      }
+
+      return {
+        ...category,
+        type: "entrada" as const,
+      };
+    });
+
+    const hasChanged = nextCategories.some((category, index) => category.type !== categories[index].type);
+    if (hasChanged) {
+      setCategories(nextCategories);
+    }
+  }, [asphaltSettings.categoryId, categories]);
+
   const addCategory = useCallback((c: Omit<Category, "id">) => {
     setCategories((prev) => [...prev, { ...c, id: uid() }]);
   }, []);
@@ -174,12 +258,14 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const addTransaction = useCallback((t: Omit<Transaction, "id">) => {
-    setTransactions((prev) => [...prev, { ...t, id: uid() }]);
-  }, []);
+    const normalized = normalizeTransaction(t);
+    setTransactions((prev) => [...prev, { ...normalized, id: uid() }]);
+  }, [normalizeTransaction]);
 
   const updateTransaction = useCallback((t: Transaction) => {
-    setTransactions((prev) => prev.map((x) => (x.id === t.id ? t : x)));
-  }, []);
+    const normalized = normalizeTransaction(t);
+    setTransactions((prev) => prev.map((x) => (x.id === t.id ? { ...normalized, id: t.id } : x)));
+  }, [normalizeTransaction]);
 
   const deleteTransaction = useCallback((id: string) => {
     setTransactions((prev) => {
@@ -205,7 +291,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
 
   const addAsphaltEntry = useCallback((e: Omit<AsphaltEntry, "id" | "total">) => {
     const total = e.tons * e.pricePerTon;
-    const catId = asphaltSettings.categoryId || categories.find((c) => c.name === "Asfalto")?.id || "";
+    const catId = resolveAsphaltCategoryId();
     const txId = catId ? uid() : undefined;
 
     const entry: AsphaltEntry = {
@@ -222,7 +308,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
         ...prev,
         {
           id: txId,
-          type: "saida",
+          type: "entrada",
           amount: total,
           date: e.date,
           categoryId: catId,
@@ -232,7 +318,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
         },
       ]);
     }
-  }, [asphaltSettings.categoryId, categories]);
+  }, [resolveAsphaltCategoryId]);
 
   const updateAsphaltSettings = useCallback((s: AsphaltSettings) => {
     setAsphaltSettings(s);
@@ -249,16 +335,91 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const addFuelEntry = useCallback((e: Omit<FuelEntry, "id">) => {
-    setFuelEntries((prev) => [...prev, { ...e, id: uid() }]);
-  }, []);
+    const fuelCategoryId = resolveFuelCategoryId();
+    const amount = sanitizeFuelAmount(e.amount);
+    const liters = sanitizeFuelLiters(e.liters);
+    const transactionId = fuelCategoryId ? uid() : undefined;
+
+    const entry: FuelEntry = {
+      ...e,
+      id: uid(),
+      amount,
+      liters,
+      description: e.description.trim() || "Abastecimento",
+      transactionId,
+    };
+
+    setFuelEntries((prev) => [...prev, entry]);
+
+    if (!transactionId) return;
+
+    setTransactions((prev) => [
+      ...prev,
+      {
+        id: transactionId,
+        type: "saida",
+        amount,
+        date: entry.date,
+        categoryId: fuelCategoryId,
+        description: getFuelTransactionDescription(entry.description, entry.liters),
+        paymentMethod: "pix",
+        status: amount > 0 ? "pago" : "pendente",
+      },
+    ]);
+  }, [resolveFuelCategoryId]);
 
   const deleteFuelEntry = useCallback((id: string) => {
-    setFuelEntries((prev) => prev.filter((x) => x.id !== id));
+    setFuelEntries((prev) => {
+      const entry = prev.find((item) => item.id === id);
+      if (entry?.transactionId) {
+        setTransactions((txs) => txs.filter((tx) => tx.id !== entry.transactionId));
+      }
+      return prev.filter((item) => item.id !== id);
+    });
   }, []);
 
   const updateFuelEntry = useCallback((e: FuelEntry) => {
-    setFuelEntries((prev) => prev.map((x) => (x.id === e.id ? e : x)));
-  }, []);
+    const fuelCategoryId = resolveFuelCategoryId();
+    const amount = sanitizeFuelAmount(e.amount);
+    const liters = sanitizeFuelLiters(e.liters);
+    const transactionId = e.transactionId ?? (fuelCategoryId ? uid() : undefined);
+
+    const entry: FuelEntry = {
+      ...e,
+      amount,
+      liters,
+      description: e.description.trim() || "Abastecimento",
+      transactionId,
+    };
+
+    setFuelEntries((prev) => prev.map((item) => (item.id === entry.id ? entry : item)));
+
+    if (!transactionId) return;
+
+    setTransactions((prev) => {
+      const existing = prev.find((tx) => tx.id === transactionId);
+      const categoryId = existing?.categoryId || fuelCategoryId;
+      if (!categoryId) return prev;
+
+      const nextTx: Transaction = {
+        ...(existing ?? {}),
+        id: transactionId,
+        type: "saida",
+        amount,
+        date: entry.date,
+        categoryId,
+        description: getFuelTransactionDescription(entry.description, entry.liters),
+        paymentMethod: existing?.paymentMethod ?? "pix",
+        status: amount > 0 ? "pago" : "pendente",
+      };
+
+      if (existing) {
+        return prev.map((tx) => (tx.id === transactionId ? nextTx : tx));
+      }
+
+      return [...prev, nextTx];
+    });
+  }, [resolveFuelCategoryId]);
 
   const openFuelPeriod = useCallback((startDate: string) => {
     setFuelPeriods((prev) => [...prev, { id: uid(), startDate, closed: false }]);
@@ -269,27 +430,10 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       const period = prev.find((p) => p.id === periodId);
       if (!period || period.closed) return prev;
 
-      const periodEntries = fuelEntries.filter((e) => e.periodId === periodId);
-      const total = periodEntries.reduce((sum, e) => sum + e.amount, 0);
-      const fuelCategoryId = categories.find((c) => c.name === "Combustível")?.id || "";
-
-      let consolidatedTransactionId: string | undefined;
-      if (total > 0 && fuelCategoryId) {
-        consolidatedTransactionId = uid();
-        setTransactions((txs) => [
-          ...txs,
-          {
-            id: consolidatedTransactionId,
-            type: "saida",
-            amount: total,
-            date: new Date().toISOString().slice(0, 10),
-            categoryId: fuelCategoryId,
-            description: `Combustível período ${period.startDate} (${periodEntries.length} lançamentos)`,
-            paymentMethod: "pix",
-            status: "pago",
-          },
-        ]);
-      }
+      const periodEntries = fuelEntries.filter((entry) => entry.periodId === periodId);
+      const endDate = periodEntries.length > 0
+        ? [...periodEntries].sort((a, b) => b.date.localeCompare(a.date))[0].date
+        : new Date().toISOString().slice(0, 10);
 
       return prev.map((p) =>
         p.id === periodId
@@ -297,13 +441,164 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
               ...p,
               closed: true,
               closedAt: new Date().toISOString(),
-              endDate: new Date().toISOString().slice(0, 10),
-              consolidatedTransactionId,
+              endDate,
+              consolidatedTransactionId: undefined,
             }
           : p,
       );
     });
-  }, [fuelEntries, categories]);
+  }, [fuelEntries]);
+
+  useEffect(() => {
+    const asphaltCategoryId = resolveAsphaltCategoryId();
+    const fuelCategoryId = resolveFuelCategoryId();
+
+    const txMap = new Map(transactions.map((tx) => [tx.id, tx]));
+    let transactionsChanged = false;
+
+    const upsertTransaction = (candidate: Transaction) => {
+      const existing = txMap.get(candidate.id);
+      if (!existing) {
+        txMap.set(candidate.id, candidate);
+        transactionsChanged = true;
+        return;
+      }
+
+      const merged: Transaction = {
+        ...existing,
+        ...candidate,
+        paymentMethod: existing.paymentMethod ?? candidate.paymentMethod,
+      };
+
+      const hasChanged =
+        existing.type !== merged.type ||
+        existing.amount !== merged.amount ||
+        existing.date !== merged.date ||
+        existing.categoryId !== merged.categoryId ||
+        existing.description !== merged.description ||
+        existing.status !== merged.status ||
+        existing.paymentMethod !== merged.paymentMethod;
+
+      if (!hasChanged) return;
+
+      txMap.set(candidate.id, merged);
+      transactionsChanged = true;
+    };
+
+    let asphaltChanged = false;
+    const nextAsphaltEntries = asphaltEntries.map((entry) => {
+      const total = Number.isFinite(entry.total) ? entry.total : entry.tons * entry.pricePerTon;
+      const transactionId = entry.transactionId ?? (asphaltCategoryId ? uid() : undefined);
+      const nextEntry: AsphaltEntry = {
+        ...entry,
+        total,
+        transactionId,
+      };
+
+      if (
+        entry.total !== nextEntry.total ||
+        entry.transactionId !== nextEntry.transactionId
+      ) {
+        asphaltChanged = true;
+      }
+
+      if (transactionId && asphaltCategoryId) {
+        upsertTransaction({
+          id: transactionId,
+          type: "entrada",
+          amount: total,
+          date: entry.date,
+          categoryId: asphaltCategoryId,
+          description: `Asfalto: ${entry.tons}t x R$${entry.pricePerTon.toFixed(2)}`,
+          paymentMethod: "pix",
+          status: "pago",
+        });
+      }
+
+      return nextEntry;
+    });
+
+    const consolidatedIds = new Set(
+      fuelPeriods.map((period) => period.consolidatedTransactionId).filter((id): id is string => Boolean(id)),
+    );
+    if (consolidatedIds.size > 0) {
+      consolidatedIds.forEach((id) => {
+        if (txMap.delete(id)) {
+          transactionsChanged = true;
+        }
+      });
+    }
+
+    let fuelChanged = false;
+    const nextFuelEntries = fuelEntries.map((entry) => {
+      const amount = sanitizeFuelAmount(entry.amount);
+      const liters = sanitizeFuelLiters(entry.liters);
+      const description = entry.description.trim() || "Abastecimento";
+      const transactionId = entry.transactionId ?? (fuelCategoryId ? uid() : undefined);
+
+      const nextEntry: FuelEntry = {
+        ...entry,
+        amount,
+        liters,
+        description,
+        transactionId,
+      };
+
+      if (
+        entry.amount !== nextEntry.amount ||
+        entry.liters !== nextEntry.liters ||
+        entry.description !== nextEntry.description ||
+        entry.transactionId !== nextEntry.transactionId
+      ) {
+        fuelChanged = true;
+      }
+
+      if (transactionId && fuelCategoryId) {
+        upsertTransaction({
+          id: transactionId,
+          type: "saida",
+          amount,
+          date: entry.date,
+          categoryId: fuelCategoryId,
+          description: getFuelTransactionDescription(description, liters),
+          paymentMethod: "pix",
+          status: amount > 0 ? "pago" : "pendente",
+        });
+      }
+
+      return nextEntry;
+    });
+
+    let fuelPeriodsChanged = false;
+    const nextFuelPeriods = fuelPeriods.map((period) => {
+      if (!period.consolidatedTransactionId) return period;
+      fuelPeriodsChanged = true;
+      return {
+        ...period,
+        consolidatedTransactionId: undefined,
+      };
+    });
+
+    if (asphaltChanged) {
+      setAsphaltEntries(nextAsphaltEntries);
+    }
+    if (fuelChanged) {
+      setFuelEntries(nextFuelEntries);
+    }
+    if (fuelPeriodsChanged) {
+      setFuelPeriods(nextFuelPeriods);
+    }
+    if (transactionsChanged) {
+      setTransactions(Array.from(txMap.values()));
+    }
+  }, [
+    asphaltEntries,
+    fuelEntries,
+    fuelPeriods,
+    transactions,
+    resolveAsphaltCategoryId,
+    resolveFuelCategoryId,
+  ]);
 
   const addEmployee = useCallback((e: Omit<Employee, "id">) => {
     setEmployees((prev) => [...prev, { ...e, id: uid() }]);
@@ -356,3 +651,4 @@ export function useFinance() {
   if (!ctx) throw new Error("useFinance must be used within FinanceProvider");
   return ctx;
 }
+
