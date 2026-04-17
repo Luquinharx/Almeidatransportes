@@ -77,6 +77,10 @@ function sanitizeFuelLiters(liters: number | undefined) {
   return liters;
 }
 
+function buildStateHash(state: FinanceState) {
+  return JSON.stringify(state);
+}
+
 export function FinanceProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   const cachedState = useMemo(() => loadFinanceStateFromCache(), []);
@@ -90,10 +94,10 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
   const [fuelPeriods, setFuelPeriods] = useState<FuelPeriod[]>(cachedState.fuelPeriods);
   const [employees, setEmployees] = useState<Employee[]>(cachedState.employees);
 
-  const remoteHydrationRef = useRef(false);
-  const remoteReadyRef = useRef(false);
+  const [remoteReady, setRemoteReady] = useState(false);
   const saveTimeoutRef = useRef<number | null>(null);
   const latestStateRef = useRef<FinanceState>(cachedState);
+  const syncedStateHashRef = useRef(buildStateHash(cachedState));
 
   const currentState = useMemo<FinanceState>(
     () => ({
@@ -116,36 +120,43 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!user?.uid) {
-      remoteReadyRef.current = false;
+      setRemoteReady(false);
       return;
     }
 
-    remoteReadyRef.current = false;
+    setRemoteReady(false);
 
     const unsubscribe = subscribeFinanceState(
       user.uid,
       (remoteState) => {
-        remoteHydrationRef.current = true;
-
         if (remoteState) {
-          setCategories(remoteState.categories);
-          setTransactions(remoteState.transactions);
-          setFixedExpenses(remoteState.fixedExpenses);
-          setAsphaltEntries(remoteState.asphaltEntries);
-          setAsphaltSettings(remoteState.asphaltSettings);
-          setFuelEntries(remoteState.fuelEntries);
-          setFuelPeriods(remoteState.fuelPeriods);
-          setEmployees(remoteState.employees);
+          const remoteHash = buildStateHash(remoteState);
+          syncedStateHashRef.current = remoteHash;
+
+          const localHash = buildStateHash(latestStateRef.current);
+          if (remoteHash !== localHash) {
+            setCategories(remoteState.categories);
+            setTransactions(remoteState.transactions);
+            setFixedExpenses(remoteState.fixedExpenses);
+            setAsphaltEntries(remoteState.asphaltEntries);
+            setAsphaltSettings(remoteState.asphaltSettings);
+            setFuelEntries(remoteState.fuelEntries);
+            setFuelPeriods(remoteState.fuelPeriods);
+            setEmployees(remoteState.employees);
+          }
         } else {
-          void saveFinanceState(user.uid, latestStateRef.current);
+          const localState = latestStateRef.current;
+          syncedStateHashRef.current = buildStateHash(localState);
+          void saveFinanceState(user.uid, localState).catch((error) => {
+            console.error("Falha ao salvar estado inicial no Firestore:", error);
+          });
         }
 
-        remoteHydrationRef.current = false;
-        remoteReadyRef.current = true;
+        setRemoteReady(true);
       },
       (error) => {
         console.error("Falha ao sincronizar Firestore:", error);
-        remoteReadyRef.current = true;
+        setRemoteReady(true);
       },
     );
 
@@ -155,14 +166,23 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
   }, [user?.uid]);
 
   useEffect(() => {
-    if (!user?.uid || !remoteReadyRef.current || remoteHydrationRef.current) return;
+    if (!user?.uid || !remoteReady) return;
+
+    const currentHash = buildStateHash(currentState);
+    if (currentHash === syncedStateHashRef.current) return;
 
     if (saveTimeoutRef.current) {
       window.clearTimeout(saveTimeoutRef.current);
     }
 
     saveTimeoutRef.current = window.setTimeout(() => {
-      void saveFinanceState(user.uid, currentState);
+      void saveFinanceState(user.uid, currentState)
+        .then(() => {
+          syncedStateHashRef.current = currentHash;
+        })
+        .catch((error) => {
+          console.error("Falha ao salvar estado no Firestore:", error);
+        });
     }, 500);
 
     return () => {
@@ -170,7 +190,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
         window.clearTimeout(saveTimeoutRef.current);
       }
     };
-  }, [currentState, user?.uid]);
+  }, [currentState, remoteReady, user?.uid]);
 
   const resolveAsphaltCategoryId = useCallback(() => {
     const configured = categories.find(
